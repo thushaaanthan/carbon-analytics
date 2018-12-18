@@ -403,9 +403,21 @@ public class TemplateManagerService implements BusinessRulesService {
             }
             return TemplateManagerConstants.SIDDHI_APP_NOT_DEPLOYED;
         } catch (SiddhiAppsApiHelperException e) {
-            if (businessRuleStatus == TemplateManagerConstants.PARTIALLY_DEPLOYED) {
-                return TemplateManagerConstants.SIDDHI_APP_NOT_DEPLOYED;
+           if (businessRuleStatus == TemplateManagerConstants.PARTIALLY_DEPLOYED && e.getStatus() == 404) {
+               return TemplateManagerConstants.SIDDHI_APP_DEPLOYED;
+           } else  if (businessRuleStatus == TemplateManagerConstants.PARTIALLY_DEPLOYED) {
+               return TemplateManagerConstants.SIDDHI_APP_UNREACHABLE;
+           }
+           if (businessRuleStatus == TemplateManagerConstants.PARTIALLY_UNDEPLOYED && e.getStatus() == 404) {
+               return TemplateManagerConstants.SIDDHI_APP_NOT_DEPLOYED;
+            } else if (businessRuleStatus == TemplateManagerConstants.PARTIALLY_UNDEPLOYED ) {
+               return TemplateManagerConstants.SIDDHI_APP_UNREACHABLE;
             }
+           if (businessRuleStatus == TemplateManagerConstants.DEPLOYED && e.getStatus() == 404) {
+               return TemplateManagerConstants.SIDDHI_APP_NOT_DEPLOYED;
+            } else if (businessRuleStatus == TemplateManagerConstants.DEPLOYED) {
+               return TemplateManagerConstants.SIDDHI_APP_UNREACHABLE;
+           }
             return TemplateManagerConstants.SIDDHI_APP_UNREACHABLE;
         }
     }
@@ -511,7 +523,6 @@ public class TemplateManagerService implements BusinessRulesService {
         }
         return status;
     }
-
 
 
     /**
@@ -666,63 +677,48 @@ public class TemplateManagerService implements BusinessRulesService {
     /**
      * Gets un-deployment state of the given Siddhi app, in the given node.
      *
-     * @param businessRulesUUID            URL of the node in which, the deployment status is checked
-     * @return status                       The un-deployment status
+     * @param businessRulesUUID URL of the node in which, the deployment status is checked
+     * @return status              The un-deployment status
      */
     private int undeployBusinessRule(String businessRulesUUID)
             throws TemplateManagerServiceException, BusinessRuleNotFoundException {
         this.availableBusinessRules = loadBusinessRulesFromDB();
         BusinessRule businessRule = findBusinessRule(businessRulesUUID);
-        boolean isSuccessfullyUndeployed;
-        int status = TemplateManagerConstants.UNDEPLOYMENT_FAILURE ;
-
+        int status;
         // If found Business Rule is from Template
         if (businessRule instanceof BusinessRuleFromTemplate) {
             BusinessRuleFromTemplate businessRuleFromTemplate = (BusinessRuleFromTemplate) businessRule;
             Collection<Template> templates;
             templates = getTemplates(businessRuleFromTemplate);
             List<String> nodeList = getNodesList(businessRuleFromTemplate.getRuleTemplateUUID());
-
+            int nodeCount = 0;
             if (nodeList == null) {
                 throw new TemplateManagerServiceException("Failed to find configurations of nodes for deploying " +
                         "business rules.");
             }
-            int currentState;
-            try {
-                currentState = getDeploymentState(businessRule);
-            } catch (BusinessRulesDatasourceException e) {
-                throw new TemplateManagerServiceException("Failed to get status of the business rule '" +
-                        businessRulesUUID + "'. ", e);
-            }
-            int nodeURLCount = 0;
-            if (currentState != TemplateManagerConstants.SAVED) {
-                for (String nodeURL : nodeList) {
-                    outerloop:
-                    for (int i = 0; i < templates.size(); i++) {
-                        boolean isSiddhiAppUndeployed;
-                        String siddhiAppName = businessRuleFromTemplate.getUuid() + "_" + i;
-                        try {
-                            isSiddhiAppUndeployed = undeploySiddhiApp(nodeURL, siddhiAppName);
-                            if (!isSiddhiAppUndeployed) {
-                                status = TemplateManagerConstants.PARTIALLY_UNDEPLOYED;
-                                break outerloop;
-                            }
-
-                        } catch (SiddhiAppsApiHelperException e) {
-                            log.error(String.format("Failed to undeploy siddhi app of %s of the businessRule %s " +
-                                            "from node %s ", removeCRLFCharacters(siddhiAppName),
-                                    removeCRLFCharacters(businessRule.getUuid()),
-                                    removeCRLFCharacters(nodeURL)), e);
-                            status = TemplateManagerConstants.PARTIALLY_UNDEPLOYED;
-                            break;
+            for (String nodeURL : nodeList) {
+                for (int i = 0; i < templates.size(); i++) {
+                    String siddhiAppName = businessRuleFromTemplate.getUuid() + "_" + i;
+                    try {
+                        undeploySiddhiApp(nodeURL, siddhiAppName);
+                        nodeCount = nodeCount + 1;
+                    } catch (SiddhiAppsApiHelperException e) {
+                        log.error(String.format("Failed to undeploy siddhi app of %s of the businessRule %s " +
+                                        "from node %s ", removeCRLFCharacters(siddhiAppName),
+                                removeCRLFCharacters(businessRule.getUuid()),
+                                removeCRLFCharacters(nodeURL)));
+                        if (e.getStatus() == 404) {
+                            nodeCount = nodeCount + 1;
                         }
                     }
-                    nodeURLCount = nodeURLCount + 1;
                 }
             }
-            if (nodeURLCount == nodeList.size()) {
+            if (nodeCount == (nodeList.size() * templates.size())) {
                 status = TemplateManagerConstants.SAVED;
+            } else {
+                status = TemplateManagerConstants.PARTIALLY_UNDEPLOYED;
             }
+            updateDeploymentStatus(businessRulesUUID, status);
         } else {
             BusinessRuleFromScratch businessRuleFromScratch = (BusinessRuleFromScratch) businessRule;
             List<String> nodeList = getNodeListForBusinessRuleFromScratch(businessRuleFromScratch);
@@ -730,44 +726,26 @@ public class TemplateManagerService implements BusinessRulesService {
                 throw new TemplateManagerServiceException("Failed to find configurations of nodes " +
                         "for deploying business rules.");
             }
-            int currentState;
-            try {
-                currentState = getDeploymentState(businessRule);
-            } catch (BusinessRulesDatasourceException e) {
-                throw new TemplateManagerServiceException("Failed to get status of the business rule '" +
-                        businessRulesUUID + "'. ", e);
-            }
-            int nodeURLCount = 0;
-            if (currentState != TemplateManagerConstants.SAVED) {
-                for (String nodeURL : nodeList) {
-                    try {
-                        isSuccessfullyUndeployed = undeploySiddhiApp(nodeURL, businessRuleFromScratch.getUuid());
-                        if (!isSuccessfullyUndeployed) {
-                            status = TemplateManagerConstants.PARTIALLY_UNDEPLOYED;
-                            break;
-                        }
-
-                    } catch (SiddhiAppsApiHelperException e) {
-                        log.error(String.format("Failed to undeploy siddhi app of %s of the businessRule %s " +
-                                        "from node %s ", businessRuleFromScratch.getUuid(),
-                                businessRule.getUuid(), nodeURL), e);
-                        status = TemplateManagerConstants.PARTIALLY_UNDEPLOYED;
-                        break;
+            int nodeCount = 0;
+            for (String nodeURL : nodeList) {
+                try {
+                    undeploySiddhiApp(nodeURL, businessRuleFromScratch.getUuid());
+                    nodeCount = nodeCount + 1;
+                } catch (SiddhiAppsApiHelperException e) {
+                    log.error(String.format("Failed to undeploy siddhi app of %s of the businessRule %s " +
+                                    "from node %s ", businessRuleFromScratch.getUuid(),
+                            businessRule.getUuid(), nodeURL), e);
+                    if (e.getStatus() == 404) {
+                        nodeCount = nodeCount + 1;
                     }
-                    nodeURLCount = nodeURLCount + 1;
                 }
             }
-            if (nodeURLCount == nodeList.size()) {
+            if (nodeCount == nodeList.size()) {
                 status = TemplateManagerConstants.SAVED;
+            } else {
+                status = TemplateManagerConstants.PARTIALLY_UNDEPLOYED;
             }
-        }
-        if (status == TemplateManagerConstants.PARTIALLY_UNDEPLOYED) {
-            try {
-                queryExecutor.executeUpdateDeploymentStatusQuery(businessRulesUUID, status);
-            } catch (BusinessRulesDatasourceException e) {
-                log.error(String.format("Failed to update the deployment status for the business rule with uuid %s " +
-                        "on the database after trying to undeploy.", removeCRLFCharacters(businessRulesUUID)), e);
-            }
+            updateDeploymentStatus(businessRulesUUID, status);
         }
         return status;
     }
@@ -957,7 +935,6 @@ public class TemplateManagerService implements BusinessRulesService {
 
     private boolean isDeployedInNode(String nodeURL, String siddhiAppName) throws SiddhiAppsApiHelperException {
         String status = siddhiAppApiHelper.getStatus(nodeURL, siddhiAppName);
-        System.err.println("********* siddhiApp " + siddhiAppName + ",  status : " + status);
         return ("active".equalsIgnoreCase(status));
     }
 
@@ -974,6 +951,7 @@ public class TemplateManagerService implements BusinessRulesService {
         if (nodeList == null) {
             return TemplateManagerConstants.ERROR;
         }
+
         for (String nodeURL : nodeList) {
             if (businessRule instanceof BusinessRuleFromScratch) {
                 Integer queriedState = getSiddhiAppDeploymentState(businessRule.getUuid(), nodeURL,
@@ -1026,6 +1004,12 @@ public class TemplateManagerService implements BusinessRulesService {
             if (queriedState == TemplateManagerConstants.PARTIALLY_DEPLOYED ||
                     queriedState == TemplateManagerConstants.PARTIALLY_UNDEPLOYED) {
                 return queriedState;
+            }
+            if (queriedState == TemplateManagerConstants.DEPLOYED) {
+                return TemplateManagerConstants.PARTIALLY_DEPLOYED;
+            }
+            if (queriedState == TemplateManagerConstants.SAVED) {
+                return TemplateManagerConstants.PARTIALLY_UNDEPLOYED;
             }
             return TemplateManagerConstants.SAVED;
         }
@@ -1478,9 +1462,9 @@ public class TemplateManagerService implements BusinessRulesService {
      * @param siddhiApp : siddhiApp to be updated.
      * @throws SiddhiAppsApiHelperException : occurs when dealing with SiddhiAppsApi
      */
-    private void updateDeployedSiddhiApp(String nodeURL, Artifact siddhiApp) throws
-            SiddhiAppsApiHelperException {
+    private void updateDeployedSiddhiApp(String nodeURL, Artifact siddhiApp) throws SiddhiAppsApiHelperException {
         siddhiAppApiHelper.update(nodeURL, siddhiApp.getContent());
+
     }
 
     /**

@@ -411,7 +411,7 @@ public class BusinessRulesApiServiceImpl extends BusinessRulesApiService {
         List<Object> responseData = new ArrayList<Object>();
         try {
 
-            status = templateManagerService.deployOrUndeployBusinessRule(businessRuleInstanceID, shouldUndeploy);
+            int status = templateManagerService.deployOrUndeployBusinessRule(businessRuleInstanceID, shouldUndeploy);
 
             switch (status) {
                 case (TemplateManagerConstants.DEPLOYED):
@@ -419,8 +419,8 @@ public class BusinessRulesApiServiceImpl extends BusinessRulesApiService {
                     responseData.add("Successfully deployed the business rule");
                     break;
                 case (TemplateManagerConstants.SAVED):
-                    responseData.add("Deployment Successful");
-                    responseData.add("Successfully undeployed the business rule");
+                    responseData.add("Saving Successful");
+                    responseData.add("Successfully saved the business rule");
                     break;
                 case (TemplateManagerConstants.SUCCESSFULLY_UNDEPLOYED):
                     responseData.add("Undeployment Successful");
@@ -444,7 +444,7 @@ public class BusinessRulesApiServiceImpl extends BusinessRulesApiService {
                     break;
                 default:
                     responseData.add("Deployment Error");
-                    responseData.add("Failed to deploy the business rule");
+                    responseData.add("Failed to deploy the business rule.");
             }
             responseData.add(status);
             return Response.ok().entity(gson.toJson(responseData)).build();
@@ -511,10 +511,6 @@ public class BusinessRulesApiServiceImpl extends BusinessRulesApiService {
                 case (TemplateManagerConstants.DEPLOYMENT_FAILURE):
                     responseData.add("Deployment Failure");
                     responseData.add("Failed to deploy the business rule");
-                    break;
-                case (TemplateManagerConstants.UNDEPLOYMENT_FAILURE):
-                    responseData.add("Undeployment Failure");
-                    responseData.add("Failed to undeploy the business rule");
                     break;
                 case (TemplateManagerConstants.PARTIALLY_UNDEPLOYED):
                     responseData.add("PARTIALLY UNDEPLOYED");
